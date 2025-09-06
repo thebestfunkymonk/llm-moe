@@ -87,7 +87,11 @@ def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor
     """Newton-Schulz iteration to compute the zeroth power / orthogonalization of G."""
     assert G.ndim >= 2
     a, b, c = (3.4445, -4.7750, 2.0315)
-    X = G.bfloat16()
+    # Prefer bfloat16 on CUDA for performance; fall back to float32 on CPU for stability
+    if G.is_cuda:
+        X = G.to(dtype=torch.bfloat16)
+    else:
+        X = G.to(dtype=torch.float32)
 
     if G.size(-2) > G.size(-1):
         X = X.mT
@@ -141,8 +145,11 @@ def load_and_cache_data(config: ModelConfig, cache_dir: str = "data_cache"):
             cached_data = pickle.load(f)
 
         texts = cached_data['texts']
-        tokenizer = cached_data['tokenizer']
         tokens = cached_data['tokens']
+        tokenizer_name = cached_data.get('tokenizer_name', "HuggingFaceTB/SmolLM-135M")
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
         config.vocab_size = tokenizer.vocab_size
 
         print(f"✅ Loaded {len(texts)} documents, {len(tokens):,} tokens from cache")
@@ -151,12 +158,13 @@ def load_and_cache_data(config: ModelConfig, cache_dir: str = "data_cache"):
     print(f"🔄 Processing new data (will cache for future use)")
 
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/SmolLM-135M", token=False)
+    tokenizer_name = "HuggingFaceTB/SmolLM-135M"
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Load dataset
-    dataset = load_dataset("HuggingFaceTB/smollm-corpus", "cosmopedia-v2", split="train", streaming=True, token=False)
+    dataset = load_dataset("HuggingFaceTB/smollm-corpus", "cosmopedia-v2", split="train", streaming=True)
 
     texts = []
     for i, item in enumerate(dataset):
@@ -178,7 +186,7 @@ def load_and_cache_data(config: ModelConfig, cache_dir: str = "data_cache"):
     config.vocab_size = tokenizer.vocab_size
 
     # Cache the processed data
-    cached_data = {'texts': texts, 'tokenizer': tokenizer, 'tokens': tokens}
+    cached_data = {'texts': texts, 'tokenizer_name': tokenizer_name, 'tokens': tokens}
     with open(cache_file, 'wb') as f:
         pickle.dump(cached_data, f)
 
@@ -603,6 +611,44 @@ def evaluate_model(model: nn.Module, val_loader: DataLoader, config: ModelConfig
     model.train()
     return {'val_loss': avg_loss, 'val_accuracy': accuracy, 'val_perplexity': perplexity}
 
+def generate_text(
+    model: nn.Module,
+    tokenizer: AutoTokenizer,
+    prompt: str,
+    max_new_tokens: int = 50,
+    temperature: float = 1.0,
+    top_k: int = 50
+):
+    """Simple text generation for sanity checking after training."""
+    model.eval()
+    device = next(model.parameters()).device
+
+    input_ids = torch.tensor(tokenizer.encode(prompt, add_special_tokens=False), device=device).unsqueeze(0)
+
+    for _ in range(max_new_tokens):
+        with torch.no_grad():
+            if hasattr(model, 'config') and isinstance(model.config, MoEModelConfig):
+                logits = model(input_ids, return_aux_loss=False)
+            else:
+                logits = model(input_ids)
+
+            logits = logits[:, -1, :] / max(temperature, 1e-5)
+
+            if top_k is not None and top_k > 0 and top_k < logits.size(-1):
+                values, indices = torch.topk(logits, k=top_k, dim=-1)
+                probs = torch.zeros_like(logits).scatter_(-1, indices, F.softmax(values, dim=-1))
+            else:
+                probs = F.softmax(logits, dim=-1)
+
+            next_token = torch.multinomial(probs, num_samples=1)
+
+        input_ids = torch.cat([input_ids, next_token], dim=1)
+
+    output_text = tokenizer.decode(input_ids[0].tolist())
+    print(f"🧪 Sample generation -> {output_text[:200]}...")
+    model.train()
+    return output_text
+
 def setup_muon_optimizer(model: nn.Module, config: ModelConfig):
     """Setup Muon optimizer with hybrid approach"""
     muon_params = []
@@ -898,7 +944,7 @@ if __name__ == "__main__":
 
     # Test both models for 3000 steps each
     models_to_test = [
-        ("Regular Transformer", ModelConfig(max_steps=3000, vocab_size=vocab_size)),
+        ("Regular Transformer", ModelConfig(max_steps=3000, vocab_size=vocab_size, use_amp=torch.cuda.is_available())),
         ("Mixture of Experts", MoEModelConfig(
             # Base model parameters
             d_model=384,
@@ -913,7 +959,8 @@ if __name__ == "__main__":
             num_experts=8,
             expert_top_k=2,
             moe_layers="alternate",
-            load_balancing_weight=0.01
+            load_balancing_weight=0.01,
+            use_amp=torch.cuda.is_available()
         ))
     ]
 
@@ -965,3 +1012,11 @@ if __name__ == "__main__":
         print(f"   Validation Accuracy: {final_metrics['val_accuracy']:.4f}")
         print(f"   Validation Perplexity: {final_metrics['val_perplexity']:.2f}")
         print(f"{'='*60}")
+
+        # Post-training sanity generation
+        try:
+            prompt = "The quick brown fox"
+            print(f"\n🧪 Generating sample text for sanity check (prompt: '{prompt}'):")
+            _ = generate_text(model, tokenizer, prompt, max_new_tokens=64, temperature=0.9, top_k=50)
+        except Exception as e:
+            print(f"⚠️ Generation failed: {e}")

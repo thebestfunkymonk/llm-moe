@@ -59,6 +59,10 @@ The script automatically:
 3. Compares their performance metrics
 4. Reports training time and final results
 
+### 🧪 Post-training sanity generation
+
+After training each model, the script now performs a basic text generation sanity check using the prompt `"The quick brown fox"` and prints a short sample. This helps quickly verify the model produces reasonable outputs.
+
 ## 📚 Dependencies
 
 - PyTorch
