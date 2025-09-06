@@ -944,7 +944,7 @@ if __name__ == "__main__":
 
     # Test both models for 3000 steps each
     models_to_test = [
-        ("Regular Transformer", ModelConfig(max_steps=3000, vocab_size=vocab_size, use_amp=torch.cuda.is_available())),
+        ("Regular Transformer", ModelConfig(d_ff=3072, max_steps=3000, vocab_size=vocab_size, use_amp=torch.cuda.is_available())),
         ("Mixture of Experts", MoEModelConfig(
             # Base model parameters
             d_model=384,
