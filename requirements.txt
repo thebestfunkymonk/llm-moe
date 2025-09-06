@@ -2,3 +2,6 @@ datasets
 transformers
 torchtune
 torchao
+torch
+numpy
+tqdm
