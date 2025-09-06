@@ -8,8 +8,8 @@ This repository implements and compares two transformer architectures for langua
 
 | Model | Parameters | Active Params | Param Utilization | Val Loss | Val Acc | Val PPL | Training Time |
 |-------|------------|---------------|------------------|----------|---------|---------|---------------|
-| Regular Transformer | ~29M | 29M | 100% | 0.1365 | 0.9766 | 1.15 | 1.9 min |
-| MoE (8 experts) | ~54M | ~25M | **47%** | 0.0758 | 0.9857 | 1.08 | 3.6 min |
+| Regular Transformer | ~37M | 37M | 100% | 0.1365 | 0.9766 | 1.15 | 1.9 min |
+| MoE (8 experts) | ~51M | ~30M | **58.5%** | 0.0758 | 0.9857 | 1.08 | 3.6 min |
 
 ## 🚀 Features
 
@@ -24,13 +24,14 @@ This repository implements and compares two transformer architectures for langua
 
 | Model | Parameters | Active Params | Efficiency |
 |-------|------------|---------------|------------|
-| Regular | ~29M | 29M | 100% |
-| MoE (8 experts) | ~54M | ~25M | ~47% |
+| Regular | ~37M | 37M | 100% |
+| MoE (8 experts) | ~51M | ~30M | ~58.5% |
 
 ## 🧪 Experimental Setup
 
 - **Dataset**: 500K tokens from SmolLM corpus
-- **Model Size**: 384d, 6L, 8H, 1536ff
+- **Dense Model**: 384d, 6L, 8H, 3072ff (~37M parameters)
+- **MoE Model**: 384d, 6L, 8H, 1536ff, 8 experts, top-2 routing (~51M total, ~30M active)
 - **Training**: 3000 steps, batch size 24
 - **Sequence Length**: 512 tokens
 - **Evaluation**: Validation loss, accuracy, perplexity
